@@ -28,7 +28,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 app = FastAPI(
     title="Solved Sports Analytics",
     description="Sports analytics and +EV betting platform",
-    version="0.2.0",
+    version="0.3.0",
     debug=settings.debug,
     lifespan=lifespan,
 )

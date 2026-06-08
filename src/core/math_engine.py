@@ -2,6 +2,14 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True)
+class KellyResult:
+    fraction: float
+    stake: float
+    edge: float
+    full_kelly_fraction: float
+
+
+@dataclass(frozen=True, slots=True)
 class EVResult:
     implied_probability: float
     true_probability: float
@@ -82,3 +90,49 @@ def is_positive_ev(
     """Check whether a bet meets the +EV threshold."""
     result = calculate_expected_value(true_probability, american_odds)
     return result.ev_percentage > min_ev_threshold
+
+
+def calculate_kelly_wager(
+    implied_prob: float,
+    fair_prob: float,
+    current_bankroll: float,
+    fraction: float = 0.25,
+) -> KellyResult:
+    """Calculate optimal wager using the Fractional Kelly Criterion.
+
+    f* = (bp - q) / b
+    where b = decimal_odds - 1, p = fair_prob, q = 1 - p.
+    """
+    if fair_prob <= 0.0 or fair_prob >= 1.0 or implied_prob <= 0.0 or implied_prob >= 1.0:
+        return KellyResult(fraction=0.0, stake=0.0, edge=0.0, full_kelly_fraction=0.0)
+
+    if current_bankroll <= 0.0:
+        return KellyResult(fraction=0.0, stake=0.0, edge=0.0, full_kelly_fraction=0.0)
+
+    decimal_odds = 1.0 / implied_prob
+    b = decimal_odds - 1.0
+    p = fair_prob
+    q = 1.0 - p
+
+    if b <= 0.0:
+        return KellyResult(fraction=0.0, stake=0.0, edge=0.0, full_kelly_fraction=0.0)
+
+    full_kelly = (b * p - q) / b
+
+    if full_kelly <= 0.0:
+        return KellyResult(
+            fraction=0.0,
+            stake=0.0,
+            edge=round(fair_prob - implied_prob, 6),
+            full_kelly_fraction=round(full_kelly, 6),
+        )
+
+    fractional_kelly = full_kelly * fraction
+    stake = round(current_bankroll * fractional_kelly, 2)
+
+    return KellyResult(
+        fraction=round(fractional_kelly, 6),
+        stake=stake,
+        edge=round(fair_prob - implied_prob, 6),
+        full_kelly_fraction=round(full_kelly, 6),
+    )

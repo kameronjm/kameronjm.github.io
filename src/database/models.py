@@ -304,3 +304,51 @@ class ModelCoefficients(Base):
     configuration: Mapped["CustomModelConfiguration"] = relationship(back_populates="coefficients")
 
     __table_args__ = (Index("ix_coefficients_config", "config_id"),)
+
+
+class Portfolio(Base):
+    __tablename__ = "portfolios"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(100), default="Default")
+    starting_balance: Mapped[float] = mapped_column(Float, nullable=False)
+    current_balance: Mapped[float] = mapped_column(Float, nullable=False)
+    currency: Mapped[str] = mapped_column(String(10), default="USD")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    bets: Mapped[list["PlacedBet"]] = relationship(back_populates="portfolio")
+
+
+class PlacedBet(Base):
+    __tablename__ = "placed_bets"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    portfolio_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("portfolios.id"), nullable=False
+    )
+    ev_opportunity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ev_opportunities.id"), nullable=False
+    )
+    model_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("custom_model_configurations.id")
+    )
+    stake_amount: Mapped[float] = mapped_column(Float, nullable=False)
+    odds_taken: Mapped[float] = mapped_column(
+        Float, nullable=False, comment="Decimal odds at time of placement"
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), default="PENDING", comment="PENDING, WON, LOST, PUSH"
+    )
+    pnl: Mapped[float | None] = mapped_column(Float)
+    placed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    portfolio: Mapped["Portfolio"] = relationship(back_populates="bets")
+    ev_opportunity: Mapped["EVOpportunity"] = relationship()
+    model_config_ref: Mapped["CustomModelConfiguration | None"] = relationship()
+
+    __table_args__ = (
+        Index("ix_placed_bets_portfolio", "portfolio_id"),
+        Index("ix_placed_bets_status", "status"),
+    )
