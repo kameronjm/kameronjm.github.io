@@ -46,3 +46,11 @@ class Settings(BaseSettings):
         default=3.0,
         description="Minimum +EV percentage to surface an opportunity",
     )
+
+    odds_poll_interval_seconds: int = Field(
+        default=60,
+        ge=5,
+        description="Seconds between odds polling cycles",
+    )
+    odds_api_base_url: str = "https://api.the-odds-api.com/v4"
+    stats_api_base_url: str = "https://api.sportsdata.io/v3"

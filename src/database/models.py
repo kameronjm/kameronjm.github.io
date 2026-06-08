@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -207,4 +208,36 @@ class ModelPrediction(Base):
     __table_args__ = (
         Index("ix_predictions_fixture_model", "fixture_id", "model_name"),
         Index("ix_predictions_ev", "ev_percentage"),
+    )
+
+
+class EVOpportunity(Base):
+    __tablename__ = "ev_opportunities"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    fixture_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("fixtures.id"), nullable=False
+    )
+    market_odds_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("market_odds.id"), nullable=False
+    )
+    sportsbook: Mapped[str] = mapped_column(String(50), nullable=False)
+    market_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    selection: Mapped[str] = mapped_column(String(150), nullable=False)
+    odds_american: Mapped[int] = mapped_column(Integer, nullable=False)
+    implied_probability: Mapped[float] = mapped_column(Float, nullable=False)
+    fair_probability: Mapped[float] = mapped_column(Float, nullable=False)
+    edge: Mapped[float] = mapped_column(Float, nullable=False)
+    ev_percentage: Mapped[float] = mapped_column(Float, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    discovered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    fixture: Mapped["Fixture"] = relationship()
+    market_odds_record: Mapped["MarketOdds"] = relationship()
+
+    __table_args__ = (
+        Index("ix_ev_opps_active", "is_active", "ev_percentage"),
+        Index("ix_ev_opps_fixture", "fixture_id"),
     )
