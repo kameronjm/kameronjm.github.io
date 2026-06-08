@@ -54,3 +54,15 @@ class Settings(BaseSettings):
     )
     odds_api_base_url: str = "https://api.the-odds-api.com/v4"
     stats_api_base_url: str = "https://api.sportsdata.io/v3"
+
+    default_rolling_window: int = Field(
+        default=10,
+        ge=1,
+        description="Default number of recent games for rolling feature averages",
+    )
+    train_test_split_ratio: float = Field(
+        default=0.8,
+        gt=0.0,
+        lt=1.0,
+        description="Fraction of data used for training (remainder for test)",
+    )

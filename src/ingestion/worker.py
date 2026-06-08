@@ -13,10 +13,12 @@ from src.core.math_engine import (
     calculate_expected_value,
 )
 from src.database.models import (
+    CustomModelConfiguration,
     EVOpportunity,
     Fixture,
     League,
     MarketOdds,
+    ModelCoefficients,
     ModelPrediction,
     Team,
 )
@@ -24,6 +26,7 @@ from src.database.session import async_session
 from src.ingestion.mock_data import generate_baseline_projection
 from src.ingestion.odds_feeds.odds_api_provider import OddsAPIProvider
 from src.ingestion.stats_scrapers.sports_data_ingester import SportsDataIngester
+from src.models.features import FeatureMatrixBuilder, predict_from_coefficients
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +154,116 @@ async def ensure_baseline_prediction(
     return prediction
 
 
+async def _fetch_active_model(
+    session: AsyncSession,
+    league: str,
+) -> tuple[CustomModelConfiguration, ModelCoefficients] | None:
+    cfg_stmt = (
+        select(CustomModelConfiguration)
+        .where(
+            CustomModelConfiguration.league == league,
+            CustomModelConfiguration.is_active.is_(True),
+        )
+        .order_by(CustomModelConfiguration.created_at.desc())
+        .limit(1)
+    )
+    cfg_result = await session.execute(cfg_stmt)
+    config = cfg_result.scalar_one_or_none()
+    if not config:
+        return None
+
+    coeff_stmt = (
+        select(ModelCoefficients)
+        .where(ModelCoefficients.config_id == config.id)
+        .order_by(ModelCoefficients.trained_at.desc())
+        .limit(1)
+    )
+    coeff_result = await session.execute(coeff_stmt)
+    coefficients = coeff_result.scalar_one_or_none()
+    if not coefficients:
+        return None
+
+    return config, coefficients
+
+
+async def generate_ml_prediction(
+    session: AsyncSession,
+    fixture_db_id: uuid.UUID,
+    home_team_id: uuid.UUID,
+    away_team_id: uuid.UUID,
+    config: CustomModelConfiguration,
+    coefficients: ModelCoefficients,
+) -> ModelPrediction:
+    feature_names: list[str] = (
+        coefficients.metadata_extra.get("feature_names", []) if coefficients.metadata_extra else []
+    )
+    if not feature_names:
+        raw = config.feature_list
+        feature_names = raw.get("features", raw) if isinstance(raw, dict) else raw
+
+    builder = FeatureMatrixBuilder(
+        feature_keys=feature_names,
+        rolling_window=config.rolling_window,
+    )
+
+    home_rows, _ = await builder.build_historical_matrix(
+        session,
+        home_team_id,
+        away_team_id,
+        limit=config.rolling_window * 3,
+    )
+    away_rows, _ = await builder.build_historical_matrix(
+        session,
+        away_team_id,
+        home_team_id,
+        limit=config.rolling_window * 3,
+    )
+
+    home_vector = builder.build_rolling_feature_vector(home_rows, away_rows)
+    away_vector = builder.build_rolling_feature_vector(away_rows, home_rows)
+
+    home_proj = predict_from_coefficients(
+        home_vector, coefficients.intercept, coefficients.weights
+    )
+    away_proj = predict_from_coefficients(
+        away_vector, coefficients.intercept, coefficients.weights
+    )
+
+    if config.target_type == "classification":
+        home_wp = max(0.05, min(0.95, home_proj))
+        away_wp = round(1.0 - home_wp, 4)
+        pred_home = None
+        pred_away = None
+        pred_total = None
+    else:
+        pred_home = round(home_proj, 2)
+        pred_away = round(away_proj, 2)
+        pred_total = round(home_proj + away_proj, 2)
+        diff = home_proj - away_proj
+        home_wp = round(max(0.05, min(0.95, 0.5 + diff / (abs(diff) + 10) * 0.4)), 4)
+        away_wp = round(1.0 - home_wp, 4)
+
+    prediction = ModelPrediction(
+        fixture_id=fixture_db_id,
+        model_name=config.name,
+        model_version="ml_v1",
+        predicted_home_score=pred_home,
+        predicted_away_score=pred_away,
+        home_win_probability=home_wp,
+        away_win_probability=away_wp,
+        predicted_total=pred_total,
+        prediction_metadata={
+            "config_id": str(config.id),
+            "coefficients_id": str(coefficients.id),
+            "home_raw_projection": round(home_proj, 6),
+            "away_raw_projection": round(away_proj, 6),
+        },
+    )
+    session.add(prediction)
+    await session.flush()
+    return prediction
+
+
 def resolve_fair_probability(
     odds_record: MarketOdds,
     prediction: ModelPrediction,
@@ -246,6 +359,8 @@ async def run_single_cycle(leagues: list[str] | None = None) -> dict[str, int]:
             fixture_list = await stats_ingester.fetch_todays_fixtures(league_code)
             league_id = await _ensure_league(session, league_code)
 
+            active_model = await _fetch_active_model(session, league_code)
+
             for f_data in fixture_list:
                 home_team_id = await _ensure_team(
                     session,
@@ -275,7 +390,27 @@ async def run_single_cycle(leagues: list[str] | None = None) -> dict[str, int]:
                 written_odds = await upsert_odds(session, fixture_db_id, odds_rows)
                 totals["odds"] += len(written_odds)
 
-                prediction = await ensure_baseline_prediction(session, fixture_db_id, f_data)
+                if active_model:
+                    config, coefficients = active_model
+                    try:
+                        prediction = await generate_ml_prediction(
+                            session,
+                            fixture_db_id,
+                            home_team_id,
+                            away_team_id,
+                            config,
+                            coefficients,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "ML prediction failed for %s, using baseline",
+                            fixture_db_id,
+                        )
+                        prediction = await ensure_baseline_prediction(
+                            session, fixture_db_id, f_data
+                        )
+                else:
+                    prediction = await ensure_baseline_prediction(session, fixture_db_id, f_data)
 
                 fixture_obj = await session.get(Fixture, fixture_db_id, options=[])
                 if fixture_obj:

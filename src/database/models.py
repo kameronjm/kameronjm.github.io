@@ -241,3 +241,66 @@ class EVOpportunity(Base):
         Index("ix_ev_opps_active", "is_active", "ev_percentage"),
         Index("ix_ev_opps_fixture", "fixture_id"),
     )
+
+
+class CustomModelConfiguration(Base):
+    __tablename__ = "custom_model_configurations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(150), nullable=False)
+    league: Mapped[str] = mapped_column(String(10), nullable=False)
+    target_type: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        comment="regression or classification",
+    )
+    target_stat: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        comment="The outcome variable: e.g. total_points, win, over_under",
+    )
+    feature_list: Mapped[dict] = mapped_column(
+        JSON,
+        nullable=False,
+        comment="JSON array of feature key strings selected for this model",
+    )
+    rolling_window: Mapped[int] = mapped_column(Integer, default=10)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    coefficients: Mapped[list["ModelCoefficients"]] = relationship(back_populates="configuration")
+
+    __table_args__ = (Index("ix_model_config_league_active", "league", "is_active"),)
+
+
+class ModelCoefficients(Base):
+    __tablename__ = "model_coefficients"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    config_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("custom_model_configurations.id"),
+        nullable=False,
+    )
+    intercept: Mapped[float] = mapped_column(Float, nullable=False)
+    weights: Mapped[dict] = mapped_column(
+        JSON,
+        nullable=False,
+        comment="Map of feature_name -> coefficient beta_n",
+    )
+    r_value: Mapped[float | None] = mapped_column(Float)
+    test_loss: Mapped[float | None] = mapped_column(Float)
+    train_samples: Mapped[int | None] = mapped_column(Integer)
+    test_samples: Mapped[int | None] = mapped_column(Integer)
+    metadata_extra: Mapped[dict | None] = mapped_column(
+        JSON, comment="Scaler params, feature means, etc."
+    )
+    trained_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    configuration: Mapped["CustomModelConfiguration"] = relationship(back_populates="coefficients")
+
+    __table_args__ = (Index("ix_coefficients_config", "config_id"),)
