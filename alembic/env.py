@@ -1,6 +1,8 @@
 import os
 from logging.config import fileConfig
+from pathlib import Path
 
+from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool
 
 from alembic import context
@@ -11,9 +13,13 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
 db_url = os.environ.get("DATABASE_URL", config.get_main_option("sqlalchemy.url"))
 if db_url and db_url.startswith("postgresql+asyncpg://"):
     db_url = db_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+elif db_url and "+aiosqlite" in db_url:
+    db_url = db_url.replace("+aiosqlite", "", 1)
 config.set_main_option("sqlalchemy.url", db_url or "")
 
 target_metadata = Base.metadata
